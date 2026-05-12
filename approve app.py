@@ -10,6 +10,7 @@ st.title("📊 專案審核效率分析工具")
 # --- 側邊欄：設定與時區修正 ---
 with st.sidebar:
     st.header("⚙️ 計算設定")
+    # 強制指定台灣時區 (UTC+8)
     tz_taiwan = timezone(timedelta(hours=8))
     now_taiwan = datetime.now(tz_taiwan)
 
@@ -85,10 +86,8 @@ if st.button("開始交叉比對分析", type="primary"):
                             break
                         except: continue
 
-        # 3. 解析名單 (加強過濾)
+        # 3. 解析名單並過濾系統字串
         raw_personnel = [l.strip() for l in names_input.split('\n') if l.strip()]
-        
-        # 加強版黑名單：增加 "Approved" 和 "Waiting for approval"
         blacklist = [
             "Everyone from", "must approve", "Waiting for", 
             "approvals", "Approved", "Waiting for approval"
@@ -96,7 +95,6 @@ if st.button("開始交叉比對分析", type="primary"):
         
         personnel = []
         for p in raw_personnel:
-            # 只有當這一行「不完全等於」黑名單字串時，才當作人名
             if p not in blacklist and not any(b in p for b in ["Everyone from", "must approve"]):
                 personnel.append(p)
         
@@ -106,22 +104,31 @@ if st.button("開始交叉比對分析", type="primary"):
         for p in personnel:
             status = "✅ Approved" if p in approval_map else "⏳ Waiting"
             target_time = approval_map[p] if p in approval_map else ref_now
-            diff_hours = round((target_time - start_time).total_seconds() / 3600, 1)
+            
+            # 修正：耗時計算取到小數點第 2 位
+            diff_hours = round((target_time - start_time).total_seconds() / 3600, 2)
             
             if diff_hours > 72: level = "🔴 嚴重延遲 (>3天)"
             elif diff_hours > 48: level = "🟠 延遲 (>2天)"
             elif diff_hours > 24: level = "🟡 警告 (>1天)"
             else: level = "🟢 正常"
 
-            results.append({"人員名稱": p, "當前狀態": status, "紀錄/判定時間": target_time.strftime('%Y-%m-%d %H:%M'), "耗時 (H)": diff_hours, "分析結果": level})
+            results.append({
+                "人員名稱": p, 
+                "當前狀態": status, 
+                "紀錄/判定時間": target_time.strftime('%Y-%m-%d %H:%M'), 
+                "耗時 (H)": diff_hours, 
+                "分析結果": level
+            })
 
         # 4. 呈現結果
         df = pd.DataFrame(results)
         if not df.empty:
             st.divider()
             m1, m2, m3 = st.columns(3)
-            m1.metric("專案發起時間", start_time.strftime('%Y-%m-%d %H:%M'))
-            m2.metric("平均處理效率", f"{round(df['耗時 (H)'].mean(), 1)} H")
+            m1.metric("專案發起時間 (T0)", start_time.strftime('%Y-%m-%d %H:%M'))
+            # 修正：平均耗時也取到小數點第 2 位
+            m2.metric("平均處理效率", f"{round(df['耗時 (H)'].mean(), 2)} H")
             m3.metric("分析總人數", len(df))
 
             def highlight_text(val):
