@@ -106,7 +106,7 @@ if st.button("開始交叉比對分析", type="primary"):
             
             # 計算耗時
             diff_hours = (target_time - start_time).total_seconds() / 3600
-            
+
             if diff_hours > 72: level = "🔴 嚴重延遲 (>3天)"
             elif diff_hours > 48: level = "🟠 延遲 (>2天)"
             elif diff_hours > 24: level = "🟡 警告 (>1天)"
@@ -123,6 +123,9 @@ if st.button("開始交叉比對分析", type="primary"):
         # 4. 呈現結果
         df = pd.DataFrame(results)
         if not df.empty:
+            # --- 關鍵修正：將索引加 1，使顯示編號從 1 開始 ---
+            df.index = df.index + 1
+            
             st.divider()
             m1, m2, m3 = st.columns(3)
             m1.metric("專案發起時間 (T0)", start_time.strftime('%Y-%m-%d %H:%M'))
@@ -136,17 +139,17 @@ if st.button("開始交叉比對分析", type="primary"):
                 elif "🟢" in val: return "color: #96CEB4;"
                 return ""
 
-            # --- 終極修正：使用 column_config 強制顯示格式 ---
+            # 顯示表格並設定顯示格式
             st.dataframe(
                 df.style.map(highlight_text, subset=['分析結果']),
                 use_container_width=True,
                 column_config={
                     "耗時 (H)": st.column_config.NumberColumn(
                         "耗時 (H)",
-                        format="%.2f"  # 強制小數點後兩位
+                        format="%.2f"
                     )
                 }
             )
             
-            csv = df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+            csv = df.to_csv(index=True, encoding='utf-8-sig').encode('utf-8-sig')
             st.download_button("📥 下載分析報表 (CSV)", csv, f"audit_report.csv", "text/csv")
