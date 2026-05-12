@@ -139,15 +139,20 @@ if st.button("開始交叉比對分析", type="primary"):
             m2.metric("平均處理耗時", f"{round(df['耗時 (H)'].mean(), 1)} H")
             m3.metric("分析總人數", len(df))
 
-            # 著色邏輯
-            def highlight_status(row):
-                color = ''
-                if "🔴" in row["分析結果"]: color = 'background-color: #f8d7da'
-                elif "🟠" in row["分析結果"]: color = 'background-color: #ffeeba'
-                elif "🟡" in row["分析結果"]: color = 'background-color: #fff3cd'
-                return [color] * len(row)
+            # Modified 著色邏輯 for better visibility on dark backgrounds
+            def highlight_analysis_results(val):
+                # 僅將文字顏色應用於 '分析結果' 欄位
+                # 使用適合深色背景的淺色調
+                if "🔴" in val:
+                    return "color: #ffcccc;" # 淺紅
+                elif "🟠" in val:
+                    return "color: #ffe0b3;" # 淺橘
+                elif "🟡" in val:
+                    return "color: #ffffcc;" # 淺黃
+                return ""
 
-            st.dataframe(df.style.apply(highlight_status, axis=1), use_container_width=True)
+            # 使用 applymap 將著色僅應用於 '分析結果' 欄位，且僅影響文字顏色
+            st.dataframe(df.style.applymap(highlight_analysis_results, subset=['分析結果']), use_container_width=True)
             
             # 檔案下載
             csv = df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
