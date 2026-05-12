@@ -1,0 +1,104 @@
+import streamlit as st
+import pandas as pd
+from datetime import datetime
+import io
+
+# 頁面設定
+st.set_page_config(page_title="審核效率自動化分析工具", layout="wide")
+
+st.title("🚀 審核效率自動化分析工具")
+st.markdown("貼入系統原始資料，自動計算每位成員的審核耗時與延遲狀態。")
+
+# 側邊欄：設定基準參數
+with st.sidebar:
+    st.header("⚙️ 計算設定")
+    current_time = st.date_input("模擬當前日期", datetime.now())
+    current_hour = st.time_input("模擬當前時間", datetime.now().time())
+    ref_now = datetime.combine(current_time, current_hour)
+    
+    st.divider()
+    st.info("💡 邏輯說明：\n1. 尋找 'Approval step required' 作為 T0\n2. 已核准者計算實際差值\n3. 等待中者以『當前時間』計算耗時")
+
+# 主要輸入區
+raw_input = st.text_area("請貼入系統原始資料：", height=250, placeholder="徐鎮順\nApproved\nMay 12, 2026 at 8:20 AM\n...")
+
+if st.button("立即分析資料", type="primary"):
+    if not raw_input:
+        st.warning("請先貼入資料！")
+    else:
+        lines = [line.strip() for line in raw_input.split('\n') if line.strip()]
+        
+        # 1. 提取基準時間 (T0)
+        start_time = None
+        for i, line in enumerate(lines):
+            if "Approval step required" in line:
+                try:
+                    # 嘗試抓取下一行作為時間
+                    start_time = pd.to_datetime(lines[i+1].replace('at ', ''))
+                    break
+                except:
+                    continue
+        
+        if start_time is None:
+            st.error("❌ 找不到基準時間 (Approval step required)，請檢查資料格式。")
+        else:
+            # 2. 解析人員資料
+            results = []
+            # 遍歷尋找 Approved 或 Waiting
+            for i, line in enumerate(lines):
+                if line == "Approved":
+                    name = lines[i-1]
+                    try:
+                        app_time = pd.to_datetime(lines[i+1].replace('at ', ''))
+                        results.append({"人員": name, "狀態": "✅ 已核准", "時間": app_time})
+                    except:
+                        continue
+                elif line == "Waiting for approval":
+                    name = lines[i-1]
+                    results.append({"人員": name, "狀態": "⏳ 等待中", "時間": ref_now})
+
+            # 3. 建立 DataFrame 並計算
+            df = pd.DataFrame(results)
+            
+            if not df.empty:
+                # 計算小時與天數
+                df['耗時(小時)'] = df['時間'].apply(lambda x: round((x - start_time).total_seconds() / 3600, 1))
+                df['延遲天數'] = (df['耗時(小時)'] / 24).round(1)
+                
+                # 判定等級
+                def get_level(h):
+                    if h > 72: return "🔴 嚴重延遲 (>3天)"
+                    if h > 48: return "🟠 延遲 (>2天)"
+                    if h > 24: return "🟡 警告 (>1天)"
+                    return "🟢 正常"
+                
+                df['分析結果'] = df['耗時(小時)'].apply(get_level)
+                
+                # --- 儀表板呈現 ---
+                col1, col2, col3 = st.columns(3)
+                col1.metric("基準起始時間", start_time.strftime('%Y-%m-%d %H:%M'))
+                col2.metric("總人數", len(df))
+                col3.metric("平均耗時 (H)", round(df['耗時(小時)'].mean(), 1))
+
+                st.divider()
+
+                # 資料表格與顏色標記
+                st.subheader("📊 詳細分析清單")
+                
+                def color_rows(val):
+                    if "嚴重延遲" in str(val): return 'background-color: #f8d7da'
+                    if "警告" in str(val): return 'background-color: #fff3cd'
+                    return ''
+
+                st.dataframe(df.style.applymap(color_rows, subset=['分析結果']), use_container_width=True)
+
+                # 下載按鈕
+                csv = df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+                st.download_button(
+                    label="📥 下載分析報表 (CSV)",
+                    data=csv,
+                    file_name=f"audit_report_{datetime.now().strftime('%m%d')}.csv",
+                    mime='text/csv',
+                )
+            else:
+                st.info("無法從輸入資料中解析出人員名單。")
