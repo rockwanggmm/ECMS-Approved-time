@@ -104,20 +104,19 @@ if st.button("開始交叉比對分析", type="primary"):
             status = "✅ Approved" if p in approval_map else "⏳ Waiting"
             target_time = approval_map[p] if p in approval_map else ref_now
             
-            # --- 關鍵修正：計算時強制取兩位小數 ---
+            # 計算耗時
             diff_hours = (target_time - start_time).total_seconds() / 3600
-            diff_hours_rounded = float(f"{diff_hours:.2f}") 
             
-            if diff_hours_rounded > 72: level = "🔴 嚴重延遲 (>3天)"
-            elif diff_hours_rounded > 48: level = "🟠 延遲 (>2天)"
-            elif diff_hours_rounded > 24: level = "🟡 警告 (>1天)"
+            if diff_hours > 72: level = "🔴 嚴重延遲 (>3天)"
+            elif diff_hours > 48: level = "🟠 延遲 (>2天)"
+            elif diff_hours > 24: level = "🟡 警告 (>1天)"
             else: level = "🟢 正常"
 
             results.append({
                 "人員名稱": p, 
                 "當前狀態": status, 
                 "紀錄/判定時間": target_time.strftime('%Y-%m-%d %H:%M'), 
-                "耗時 (H)": diff_hours_rounded, 
+                "耗時 (H)": diff_hours, 
                 "分析結果": level
             })
 
@@ -127,11 +126,7 @@ if st.button("開始交叉比對分析", type="primary"):
             st.divider()
             m1, m2, m3 = st.columns(3)
             m1.metric("專案發起時間 (T0)", start_time.strftime('%Y-%m-%d %H:%M'))
-            
-            # --- 關鍵修正：上方統計數字也強制兩位小數 ---
-            avg_hours = df['耗時 (H)'].mean()
-            m2.metric("平均處理效率", f"{avg_hours:.2f} H")
-            
+            m2.metric("平均處理效率", f"{df['耗時 (H)'].mean():.2f} H")
             m3.metric("分析總人數", len(df))
 
             def highlight_text(val):
@@ -141,8 +136,17 @@ if st.button("開始交叉比對分析", type="primary"):
                 elif "🟢" in val: return "color: #96CEB4;"
                 return ""
 
-            # 顯示表格
-            st.dataframe(df.style.map(highlight_text, subset=['分析結果']), use_container_width=True)
+            # --- 終極修正：使用 column_config 強制顯示格式 ---
+            st.dataframe(
+                df.style.map(highlight_text, subset=['分析結果']),
+                use_container_width=True,
+                column_config={
+                    "耗時 (H)": st.column_config.NumberColumn(
+                        "耗時 (H)",
+                        format="%.2f"  # 強制小數點後兩位
+                    )
+                }
+            )
             
             csv = df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
             st.download_button("📥 下載分析報表 (CSV)", csv, f"audit_report.csv", "text/csv")
