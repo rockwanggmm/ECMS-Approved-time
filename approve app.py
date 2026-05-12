@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, time
+from datetime import datetime, time, timedelta, timezone
 
 # 頁面設定
 st.set_page_config(page_title="專案審核效率分析", layout="wide")
@@ -11,20 +11,26 @@ st.title("📊 專案審核效率分析工具")
 with st.sidebar:
     st.header("⚙️ 計算設定")
     
+    # 修正時區問題：強制指定台灣時區 (UTC+8)
+    # 避免部署在雲端伺服器時抓到美國時間
+    tz_taiwan = timezone(timedelta(hours=8))
+    now_taiwan = datetime.now(tz_taiwan)
+
     # 修正時間跳動問題：使用 session_state 鎖定使用者選定的時間
     if 'set_date' not in st.session_state:
-        st.session_state.set_date = datetime.now().date()
+        st.session_state.set_date = now_taiwan.date()
     if 'set_time' not in st.session_state:
-        st.session_state.set_time = datetime.now().time()
+        st.session_state.set_time = now_taiwan.time()
 
     # 綁定輸入元件
     d = st.date_input("當前判定日期", value=st.session_state.set_date)
     t = st.time_input("當前判定時間", value=st.session_state.set_time)
     
-    # 更新 session_state
+    # 更新 session_state 以保存使用者的手動選擇
     st.session_state.set_date = d
     st.session_state.set_time = t
     
+    # 組合最終的判定基準時間
     ref_now = datetime.combine(d, t)
     
     st.divider()
@@ -63,11 +69,12 @@ if st.button("開始交叉比對分析", type="primary"):
     if not (names_input and base_time_input):
         st.error("請確認輸入『人員名單』與『基準起始點』")
     else:
-        # --- 1. 解析基準時間 T0 ---
+        # --- 1. 解析基準時間 T0 (強化版解析) ---
         start_time = None
         base_lines = [l.strip() for l in base_time_input.split('\n') if l.strip()]
         for line in base_lines:
             try:
+                # 處理帶有 'at ' 的系統日期格式
                 clean_line = line.replace('at ', '').strip()
                 potential_time = pd.to_datetime(clean_line)
                 if potential_time.year > 2000:
@@ -79,13 +86,14 @@ if st.button("開始交叉比對分析", type="primary"):
             st.error("❌ 無法解析起始時間。格式參考：May 11, 2026 at 12:01 PM")
             st.stop()
 
-        # --- 2. 解析核准紀錄 ---
+        # --- 2. 解析核准紀錄 (Name -> Time 對照) ---
         approval_map = {}
         app_lines = [l.strip() for l in approvals_input.split('\n') if l.strip()]
         for i, line in enumerate(app_lines):
             if line == "Approved":
                 if i > 0:
                     name = app_lines[i-1]
+                    # 往下搜尋最近的 5 行內尋找日期格式
                     for j in range(i + 1, min(i + 5, len(app_lines))):
                         try:
                             time_val = pd.to_datetime(app_lines[j].replace('at ', '').strip())
@@ -93,14 +101,16 @@ if st.button("開始交叉比對分析", type="primary"):
                             break
                         except: continue
 
-        # --- 3. 解析名單並分析 ---
+        # --- 3. 解析名單並比對分析 ---
         raw_personnel = [l.strip() for l in names_input.split('\n') if l.strip()]
+        # 過濾系統雜訊字串
         blacklist = ["Everyone from", "must approve", "Waiting for", "approvals"]
         personnel = []
         for p in raw_personnel:
             if not any(b in p for b in blacklist):
                 personnel.append(p)
         
+        # 移除重複姓名並保持順序
         personnel = list(dict.fromkeys(personnel))
         
         results = []
@@ -112,8 +122,10 @@ if st.button("開始交叉比對分析", type="primary"):
                 status = "⏳ Waiting"
                 target_time = ref_now
             
+            # 計算與發起點的時間差
             diff_hours = round((target_time - start_time).total_seconds() / 3600, 1)
             
+            # 延遲標籤判定
             if diff_hours > 72: level = "🔴 嚴重延遲 (>3天)"
             elif diff_hours > 48: level = "🟠 延遲 (>2天)"
             elif diff_hours > 24: level = "🟡 警告 (>1天)"
@@ -127,25 +139,32 @@ if st.button("開始交叉比對分析", type="primary"):
                 "分析結果": level
             })
 
-        # --- 4. 呈現結果 ---
+        # --- 4. 呈現分析結果 ---
         df = pd.DataFrame(results)
         if not df.empty:
             st.divider()
             m1, m2, m3 = st.columns(3)
-            m1.metric("專案發起時間", start_time.strftime('%Y-%m-%d %H:%M'))
-            m2.metric("平均處理耗時", f"{round(df['耗時 (H)'].mean(), 1)} H")
+            m1.metric("專案發起時間 (T0)", start_time.strftime('%Y-%m-%d %H:%M'))
+            m2.metric("平均處理效率", f"{round(df['耗時 (H)'].mean(), 1)} H")
             m3.metric("分析總人數", len(df))
 
-            # 修正後的著色函數：適配深色背景並解決 AttributeError
+            # 著色函式：適配深色主題 (Dark Mode)
             def highlight_text(val):
-                if "🔴" in val: return "color: #FF6B6B;" # 明亮的淺紅
-                elif "🟠" in val: return "color: #FFAD60;" # 明亮的淺橘
-                elif "🟡" in val: return "color: #FFEEAD;" # 明亮的淺黃
-                elif "🟢" in val: return "color: #96CEB4;" # 明亮的淺綠
+                # 使用高對比度文字顏色，不使用背景色以免遮擋文字
+                if "🔴" in val: return "color: #FF6B6B; font-weight: bold;" # 亮紅
+                elif "🟠" in val: return "color: #FFAD60; font-weight: bold;" # 亮橘
+                elif "🟡" in val: return "color: #FFEEAD; font-weight: bold;" # 亮黃
+                elif "🟢" in val: return "color: #96CEB4;" # 亮綠
                 return ""
 
-            # 使用 .map() 替換 .applymap() 以符合最新 Streamlit/Pandas 規範
+            # 使用 .map() 確保與最新版 Pandas 相容
             st.dataframe(df.style.map(highlight_text, subset=['分析結果']), use_container_width=True)
             
+            # 檔案匯出
             csv = df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-            st.download_button("📥 下載分析報表 (CSV)", csv, f"audit_report_{datetime.now().strftime('%Y%m%d')}.csv", "text/csv")
+            st.download_button(
+                label="📥 下載分析報表 (CSV)",
+                data=csv,
+                file_name=f"audit_report_{datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv"
+            )
