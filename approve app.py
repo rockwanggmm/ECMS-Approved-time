@@ -49,21 +49,21 @@ col_a, col_b, col_c = st.columns(3)
 
 with col_a:
     st.subheader("1. 人員名單")
-    names_input = st.text_area("貼入所有審核人名單：", height=250, placeholder="")
+    names_input = st.text_area("貼入所有審核人名單：", height=250, placeholder="", key="input_names")
 
 with col_b:
     st.subheader("2. 核准紀錄")
-    approvals_input = st.text_area("貼入已 Approved 的詳細紀錄：", height=250, placeholder="")
+    approvals_input = st.text_area("貼入已 Approved 的詳細紀錄：", height=250, placeholder="", key="input_approvals")
 
 with col_c:
     st.subheader("3. 基準起始點")
-    base_time_input = st.text_area("貼入 Approval step required 資料：", height=250, placeholder="")
+    base_time_input = st.text_area("貼入 Approval step required 資料：", height=250, placeholder="", key="input_base")
 
 if st.button("開始交叉比對分析", type="primary"):
     if not (names_input and base_time_input):
         st.error("請確認輸入『人員名單』與『基準起始點』")
     else:
-        # --- 1. 解析基準時間 T0 (強化版) ---
+        # --- 1. 解析基準時間 T0 ---
         start_time = None
         base_lines = [l.strip() for l in base_time_input.split('\n') if l.strip()]
         for line in base_lines:
@@ -86,7 +86,6 @@ if st.button("開始交叉比對分析", type="primary"):
             if line == "Approved":
                 if i > 0:
                     name = app_lines[i-1]
-                    # 往下搜尋最近的時間格式
                     for j in range(i + 1, min(i + 5, len(app_lines))):
                         try:
                             time_val = pd.to_datetime(app_lines[j].replace('at ', '').strip())
@@ -96,14 +95,12 @@ if st.button("開始交叉比對分析", type="primary"):
 
         # --- 3. 解析名單並分析 ---
         raw_personnel = [l.strip() for l in names_input.split('\n') if l.strip()]
-        # 過濾雜訊
         blacklist = ["Everyone from", "must approve", "Waiting for", "approvals"]
         personnel = []
         for p in raw_personnel:
             if not any(b in p for b in blacklist):
                 personnel.append(p)
         
-        # 去除重複
         personnel = list(dict.fromkeys(personnel))
         
         results = []
@@ -139,21 +136,16 @@ if st.button("開始交叉比對分析", type="primary"):
             m2.metric("平均處理耗時", f"{round(df['耗時 (H)'].mean(), 1)} H")
             m3.metric("分析總人數", len(df))
 
-            # Modified 著色邏輯 for better visibility on dark backgrounds
-            def highlight_analysis_results(val):
-                # 僅將文字顏色應用於 '分析結果' 欄位
-                # 使用適合深色背景的淺色調
-                if "🔴" in val:
-                    return "color: #ffcccc;" # 淺紅
-                elif "🟠" in val:
-                    return "color: #ffe0b3;" # 淺橘
-                elif "🟡" in val:
-                    return "color: #ffffcc;" # 淺黃
+            # 修正後的著色函數：適配深色背景並解決 AttributeError
+            def highlight_text(val):
+                if "🔴" in val: return "color: #FF6B6B;" # 明亮的淺紅
+                elif "🟠" in val: return "color: #FFAD60;" # 明亮的淺橘
+                elif "🟡" in val: return "color: #FFEEAD;" # 明亮的淺黃
+                elif "🟢" in val: return "color: #96CEB4;" # 明亮的淺綠
                 return ""
 
-            # 使用 applymap 將著色僅應用於 '分析結果' 欄位，且僅影響文字顏色
-            st.dataframe(df.style.applymap(highlight_analysis_results, subset=['分析結果']), use_container_width=True)
+            # 使用 .map() 替換 .applymap() 以符合最新 Streamlit/Pandas 規範
+            st.dataframe(df.style.map(highlight_text, subset=['分析結果']), use_container_width=True)
             
-            # 檔案下載
             csv = df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
             st.download_button("📥 下載分析報表 (CSV)", csv, f"audit_report_{datetime.now().strftime('%Y%m%d')}.csv", "text/csv")
