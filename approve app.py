@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import re
 from datetime import datetime, time, timedelta, timezone
 
 # 頁面設定
@@ -41,7 +42,7 @@ col_a, col_b, col_c = st.columns(3)
 
 with col_a:
     st.subheader("1. 人員名單")
-    names_input = st.text_area("貼入所有審核人名單：", height=250)
+    names_input = st.text_area("貼入所有審核人名單：(亦可直接貼入所有人審核完成的完整資訊)", height=250)
 
 with col_b:
     st.subheader("2. 核准紀錄")
@@ -51,13 +52,20 @@ with col_c:
     st.subheader("3. 基準起始點")
     base_time_input = st.text_area("貼入 Approval step required 資料：", height=250)
 
+# 輔助函式：徹底清除複製網頁時產生的隱形空白字元 (如 \xa0)
+def clean_string(text):
+    if not text:
+        return ""
+    # 移除各類異常的隱形空白、全形空白，並做標準 trim
+    return re.sub(r'[\u00A0\u1680\u180E\u2000-\u200B\u2028\u2029\u202F\u205F\u3000\uFEFF]', ' ', text).strip()
+
 if st.button("開始交叉比對分析", type="primary"):
     if not (names_input and base_time_input):
         st.error("請確認輸入『人員名單』與『基準起始點』")
     else:
         # 1. 解析起始時間
         start_time = None
-        base_lines = [l.strip() for l in base_time_input.split('\n') if l.strip()]
+        base_lines = [clean_string(l) for l in base_time_input.split('\n') if l.strip()]
         for line in base_lines:
             try:
                 clean_line = line.replace('at ', '').strip()
@@ -73,30 +81,45 @@ if st.button("開始交叉比對分析", type="primary"):
 
         # 2. 解析核准紀錄
         approval_map = {}
-        app_lines = [l.strip() for l in approvals_input.split('\n') if l.strip()]
+        app_lines = [clean_string(l) for l in approvals_input.split('\n') if l.strip()]
         for i, line in enumerate(app_lines):
             if line == "Approved":
                 if i > 0:
                     name = app_lines[i-1]
-                    for j in range(i + 1, min(i + 5, len(app_lines))):
+                    # 往下最多找 5 行尋找正確的時間戳記
+                    for j in range(i + 1, min(i + 6, len(app_lines))):
                         try:
                             time_val = pd.to_datetime(app_lines[j].replace('at ', '').strip())
                             approval_map[name] = time_val
                             break
                         except: continue
 
-        # 3. 解析名單並過濾系統字串
-        raw_personnel = [l.strip() for l in names_input.split('\n') if l.strip()]
+        # 3. 解析名單並過濾系統字串 (加強防錯機制)
+        raw_personnel = [clean_string(l) for l in names_input.split('\n') if l.strip()]
         blacklist = [
             "Everyone from", "must approve", "Waiting for", 
-            "approvals", "Approved", "Waiting for approval"
+            "approvals", "Approved", "Waiting for approval",
+            "需求確認", "需求確認-審核人", "人員名單", "貼入所有審核人名單：",
+            "當所有人都審核完成我會貼以下資訊"
         ]
         
         personnel = []
         for p in raw_personnel:
-            if p not in blacklist and not any(b in p for b in ["Everyone from", "must approve"]):
+            # 排除黑名單字串、排除包含關鍵字的行
+            is_black = p in blacklist or any(b in p for b in ["Everyone from", "must approve"])
+            
+            # 排除時間戳記行 (避免直接貼大串資料時把時間當成人名)
+            is_time = False
+            try:
+                if "2026" in p: # 快速初步過濾
+                    pd.to_datetime(p.replace('at ', '').strip())
+                    is_time = True
+            except: pass
+            
+            if not is_black and not is_time and len(p) > 0:
                 personnel.append(p)
         
+        # 去除重複，並保持原名單順序
         personnel = list(dict.fromkeys(personnel))
         
         results = []
@@ -123,7 +146,7 @@ if st.button("開始交叉比對分析", type="primary"):
         # 4. 呈現結果
         df = pd.DataFrame(results)
         if not df.empty:
-            # --- 關鍵修正：將索引加 1，使顯示編號從 1 開始 ---
+            # --- 將索引加 1，使顯示編號從 1 開始 ---
             df.index = df.index + 1
             
             st.divider()
@@ -146,7 +169,7 @@ if st.button("開始交叉比對分析", type="primary"):
                 column_config={
                     "耗時 (H)": st.column_config.NumberColumn(
                         "耗時 (H)",
-                        format="%.2f"
+                        format="%.2f"  # 強制鎖定小數點後兩位
                     )
                 }
             )
